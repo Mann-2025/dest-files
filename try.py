@@ -1,3 +1,5 @@
 for x in range(2, 30):
-  print(x)nm kh n 
-  
+  print(x)
+
+# Compare this snippet from study%20txt.py:
+# txt = "Hello World"     
