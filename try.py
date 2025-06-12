@@ -1,12 +1,14 @@
-import cv2
-import pytesseract
-from PIL import Image
-import numpy as np
 import os
+import cv2
+import numpy as np
+from PIL import Image
 from pdf2image import convert_from_path
+import pytesseract
+import easyocr
 import re
 
-# Set up Tesseract path (modify if installed elsewhere)
+# Initialize OCR engines
+easy_reader = easyocr.Reader(['en'])
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 def load_file(file_path):
@@ -17,7 +19,6 @@ def load_file(file_path):
         images = convert_from_path(file_path)
         image = np.array(images[0])
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
     elif ext in image_formats:
         image = cv2.imread(file_path)
         if image is None:
@@ -32,48 +33,62 @@ def preprocess_image(image):
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
     _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     inverted = cv2.bitwise_not(binary)
-    return Image.fromarray(inverted)
+    return inverted
+
+def run_easyocr(image):
+    result = easy_reader.readtext(image)
+    return "\n".join([item[1] for item in result])
+
+def run_tesseract(image):
+    return pytesseract.image_to_string(image)
 
 def extract_fields(text):
     fields = {
-        "Invoice Number": None,
-        "Date": None,
-        "Total Amount": None
+        "Document Number": None,
+        "GSTINs": []
     }
 
-    for line in text.split("\n"):
-        line_clean = line.strip().lower()
+    # Fuzzy pattern for common invoice/document formats
+    doc_match = re.search(r"(INV[-/]?\d{4,6}|#\d{3,6}|[A-Z]{2,4}-\d{3,5})", text, re.IGNORECASE)
+    if doc_match:
+        fields["Document Number"] = doc_match.group()
 
-        # Invoice Number
-        if "invoice" in line_clean and ("no" in line_clean or "number" in line_clean):
-            fields["Invoice Number"] = line.strip()
-
-        # Date detection using common formats
-        if "date" in line_clean:
-            date_match = re.search(r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}", line_clean)
-            if date_match:
-                fields["Date"] = date_match.group()
-
-        # Total/Amount detection
-        if "total" in line_clean or "amount" in line_clean:
-            amt_match = re.search(r"\₹?\$?\d{1,3}(?:[,.\d]*)", line_clean)
-            if amt_match:
-                fields["Total Amount"] = amt_match.group()
+    # Relaxed pattern to capture GSTINs with potential OCR distortions
+    gstin_matches = re.findall(r"\b\d{2}[A-Z0-9]{5}\d{4}[A-Z][A-Z0-9]Z[A-Z0-9]\b", text)
+    fields["GSTINs"] = list(set(gstin_matches))
 
     return fields
 
-# === RUNNING THE OCR ===
-file_path = r"C:\Users\manns\WhatsApp Image.pdf"  # ← Change to your file (image/pdf)
+# === RUN THE OCR ===
+file_path = r"C:\Users\manns\Downloads\invoice_10.pdf0.jpg" # Change to your file
 image = load_file(file_path)
 processed_image = preprocess_image(image)
-raw_text = pytesseract.image_to_string(processed_image, config="--psm 6")
 
-# Print raw OCR text
-print("\n📝 === RAW OCR TEXT ===\n")
-print(raw_text)
+# Run EasyOCR
+easyocr_text = run_easyocr(processed_image)
 
-# Extract and print key fields
+# Run Tesseract
+tesseract_text = run_tesseract(processed_image)
+
+# Combine texts
+combined_text = easyocr_text + "\n" + tesseract_text
+
+# Print raw OCR output
+print("\n📝 === RAW OCR TEXT (EasyOCR + Tesseract) ===\n")
+print(combined_text)
+
+# Extract and print fields
 print("\n📌 === KEY EXTRACTED FIELDS ===\n")
-fields = extract_fields(raw_text)
+fields = extract_fields(combined_text)
 for key, val in fields.items():
-    print(f"{key}: {val if val else 'Not found'}")
+    if isinstance(val, list):
+        print(f"{key}: {', '.join(val) if val else 'Not found'}")
+    else:
+        print(f"{key}: {val if val else 'Not found'}")
+
+# Debug: Print lines that may contain GSTINs
+print("\n🔎 === GSTIN LINES FROM TEXT (for debugging) ===\n")
+for line in combined_text.splitlines():
+    if "GST" in line.upper():
+        print("🔍", line)
+
