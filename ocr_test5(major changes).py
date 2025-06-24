@@ -57,7 +57,7 @@ def extract_fields(text):
     return fields
 
 # === MAIN EXECUTION ===
-file_path = r"C:\Users\manns\Downloads\WhatsApp Image 2025-06-11 at 10.59.19 AM.pdf"  # Replace with your actual PDF path
+file_path = r"C:\Users\manns\Desktop\OCR BW\SO25-26AWN046 (1).pdf"
 image = load_pdf(file_path)
 processed_image = preprocess_image(image)
 

@@ -18,44 +18,65 @@ def load_pdf(file_path):
 
 def preprocess_image(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    inverted = cv2.bitwise_not(binary)
-    return inverted
+    gray = cv2.resize(gray, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_LINEAR)
+    adaptive = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                     cv2.THRESH_BINARY, 31, 15)
+    return adaptive
 
 def run_easyocr(image):
     result = easy_reader.readtext(image)
     return "\n".join([item[1] for item in result])
 
 def run_tesseract(image):
-    return pytesseract.image_to_string(image)
+    custom_config = r'--oem 3 --psm 6'
+    return pytesseract.image_to_string(image, config=custom_config)
 
 def extract_fields(text):
     fields = {
-        "Document Number": None,
+        "Invoice Number": None,
         "GSTINs": []
     }
 
-    # Enhanced patterns for various document/invoice number formats
-    doc_patterns = [
-        r"(Invoice\s*No\.?|Invoice\s*Number|INV\s*No\.?|Document\s*No\.?|Doc\s*No\.?|Bill\s*No\.?)\s*[:\-]?\s*([A-Z0-9#\/\-\.\_]{5,})",
-        r"#\d{3,6}/[A-Z\-]{2,5}\d{2,4}",  # Fallback pattern
+    invoice_keywords = [
+        "invoice no", "invoice number", "inv no", "inv.", "inv#", "doc no", "document no",
+        "bill no", "reference no", "ref no", "ref:", "invoice:", "inv:"  # expanded
     ]
 
-    for pattern in doc_patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            fields["Document Number"] = match.group(2) if len(match.groups()) > 1 else match.group(0)
+    false_hits = {"PRIVATE", "ORIGINAL", "INVOICE", "COPY", "TAX", "BILL", "SERVICE"}
+    candidates = []
+
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        line_lower = line.lower()
+        if any(kw in line_lower for kw in invoice_keywords):
+            match = re.search(r"([A-Z0-9\/\-\._]{6,25})", line, re.IGNORECASE)
+            if match:
+                val = match.group(1).strip()
+                if val.upper() not in false_hits:
+                    candidates.append(val)
+            if i + 1 < len(lines):
+                next_line = lines[i + 1].strip()
+                match_next = re.search(r"([A-Z0-9\/\-\._]{6,25})", next_line)
+                if match_next:
+                    val = match_next.group(1).strip()
+                    if val.upper() not in false_hits:
+                        candidates.append(val)
+
+    for val in candidates:
+        if re.search(r"\d", val):  # contains at least one digit
+            fields["Invoice Number"] = val
             break
 
-    # Pattern for GSTINs
+    if not fields["Invoice Number"] and candidates:
+        fields["Invoice Number"] = max(candidates, key=len)
+
     gstin_matches = re.findall(r"\b\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}Z[A-Z\d]{1}\b", text)
     fields["GSTINs"] = list(set(gstin_matches))
 
     return fields
 
 # === MAIN EXECUTION ===
-file_path = r"C:\Users\manns\Downloads\WhatsApp Image 2025-06-11 at 10.59.19 AM.pdf"  # Replace with your actual PDF path
+file_path = r"C:\Users\manns\Desktop\OCR BW\SO25-26AWN046 (1).pdf"
 image = load_pdf(file_path)
 processed_image = preprocess_image(image)
 
@@ -68,7 +89,7 @@ combined_text = easyocr_text + "\n" + tesseract_text
 fields = extract_fields(combined_text)
 
 # Print extracted key fields
-print("\n📌 === KEY EXTRACTED FIELDS ===\n")
+print("\n=== KEY EXTRACTED FIELDS ===\n")
 for key, val in fields.items():
     if isinstance(val, list):
         print(f"{key}: {', '.join(val) if val else 'Not found'}")
